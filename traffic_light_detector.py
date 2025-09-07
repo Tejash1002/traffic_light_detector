@@ -1,10 +1,6 @@
 import cv2
 import numpy as np
 
-# --- Configuration Section ---
-
-# Define HSV color ranges for Red, Yellow, and Green.
-# These are the most likely values you'll need to adjust for your specific video.
 COLOR_RANGES = {
     'red': [
         (np.array([0, 120, 120]), np.array([10, 255, 255])),
@@ -18,24 +14,17 @@ COLOR_RANGES = {
     ],
 }
 
-# Define BGR colors for drawing boxes, mapping directly to the color names
 BOX_COLORS = {
     'red': (0, 0, 255),      # BGR for Red
     'yellow': (0, 255, 255), # BGR for Yellow
     'green': (0, 255, 0)     # BGR for Green
 }
 
-# --- Detection Parameters ---
-# Adjust these values based on the video to improve accuracy
-MIN_CONTOUR_AREA = 500  # Filters out detections that are too small (likely noise)
-MIN_CIRCULARITY = 0.6   # A perfect circle has a circularity of 1
+MIN_CONTOUR_AREA = 500 
+MIN_CIRCULARITY = 0.6   
 MAX_CIRCULARITY = 1.4
-# Kernel for morphological operations (noise reduction).
-# A larger kernel (e.g., (7,7)) removes more noise but can also remove small, distant lights.
+
 MORPH_KERNEL = np.ones((7, 7), np.uint8)
-
-
-# --- Main Detection Logic ---
 
 def find_and_draw_lights(frame, hsv_frame):
     """
@@ -56,7 +45,6 @@ def find_and_draw_lights(frame, hsv_frame):
             else:
                 combined_mask = cv2.add(combined_mask, mask)
 
-        # Apply morphological opening to remove noise
         opened_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, MORPH_KERNEL)
         
         contours, _ = cv2.findContours(opened_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -80,9 +68,8 @@ def find_and_draw_lights(frame, hsv_frame):
                     'area': area
                 })
 
-    # If lights were detected, draw them all
     if detections:
-        # Draw all valid detections found in the frame
+
         for detection in detections:
             x, y, w, h = detection['box']
             color_name = detection['color']
@@ -115,10 +102,9 @@ def detect_traffic_light(video_source=0):
         
         hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-        # Find lights and draw them on the frame
-        find_and_draw_lights(frame, hsv_frame)
 
-        # Display the final detection window
+        find_and_draw_lights(frame, hsv_frame)
+        
         cv2.imshow('Traffic Light Detection', frame)
 
         if cv2.waitKey(25) & 0xFF == ord('q'):
@@ -128,12 +114,7 @@ def detect_traffic_light(video_source=0):
     cv2.destroyAllWindows()
     print("Video stream stopped.")
 
-# --- Main Execution ---
 if __name__ == '__main__':
-    # --- IMPORTANT ---
-    # To use your webcam, set video_source = 0
-    # To use a video file, change the source to the file path.
-    # For example: video_source = "C:/Users/YourUser/Videos/traffic.mp4"
     video_source = 0 
     detect_traffic_light(video_source)
 
