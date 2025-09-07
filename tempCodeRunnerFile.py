@@ -1,128 +1,139 @@
 import cv2
 import numpy as np
-import time
-from collections import Counter
 
-def run_detector(video_source=0):
+# --- Configuration Section ---
+
+# Define HSV color ranges for Red, Yellow, and Green.
+# These are the most likely values you'll need to adjust for your specific video.
+COLOR_RANGES = {
+    'red': [
+        (np.array([0, 120, 120]), np.array([10, 255, 255])),
+        (np.array([170, 120, 120]), np.array([180, 255, 255]))
+    ],
+    'yellow': [
+        (np.array([20, 100, 100]), np.array([35, 255, 255]))
+    ],
+    'green': [
+        (np.array([40, 70, 70]), np.array([90, 255, 255]))
+    ],
+}
+
+# Define BGR colors for drawing boxes, mapping directly to the color names
+BOX_COLORS = {
+    'red': (0, 0, 255),      # BGR for Red
+    'yellow': (0, 255, 255), # BGR for Yellow
+    'green': (0, 255, 0)     # BGR for Green
+}
+
+# --- Detection Parameters ---
+# Adjust these values based on the video to improve accuracy
+MIN_CONTOUR_AREA = 500  # Filters out detections that are too small (likely noise)
+MIN_CIRCULARITY = 0.6   # A perfect circle has a circularity of 1
+MAX_CIRCULARITY = 1.4
+# Kernel for morphological operations (noise reduction).
+# A larger kernel (e.g., (7,7)) removes more noise but can also remove small, distant lights.
+MORPH_KERNEL = np.ones((7, 7), np.uint8)
+
+
+# --- Main Detection Logic ---
+
+def find_and_draw_lights(frame, hsv_frame):
     """
-    Processes video to identify multiple traffic light states simultaneously.
+    Analyzes a single frame to find and draw traffic lights on the frame.
+
+    Args:
+        frame (np.array): The original BGR frame for drawing.
+        hsv_frame (np.array): The HSV-converted frame for color detection.
     """
-    # Define HSV color ranges
-    color_ranges = {
-        'red': ([0, 120, 70], [10, 255, 255]),
-        'red_wrap': ([170, 120, 70], [180, 255, 255]),
-        'yellow': ([20, 100, 100], [30, 255, 255]),
-        'green': ([40, 70, 70], [90, 255, 255]),
-    }
+    detections = []
 
-    # Define BGR colors for drawing bounding boxes
-    box_colors = {
-        'red': (0, 0, 255),
-        'yellow': (0, 255, 255),
-        'green': (0, 255, 0),
-    }
+    for color_name, ranges in COLOR_RANGES.items():
+        combined_mask = None
+        for (lower, upper) in ranges:
+            mask = cv2.inRange(hsv_frame, lower, upper)
+            if combined_mask is None:
+                combined_mask = mask
+            else:
+                combined_mask = cv2.add(combined_mask, mask)
 
+        # Apply morphological opening to remove noise
+        opened_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, MORPH_KERNEL)
+        
+        contours, _ = cv2.findContours(opened_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < MIN_CONTOUR_AREA:
+                continue
+
+            perimeter = cv2.arcLength(contour, True)
+            if perimeter == 0:
+                continue
+            
+            circularity = 4 * np.pi * (area / (perimeter * perimeter))
+
+            if MIN_CIRCULARITY < circularity < MAX_CIRCULARITY:
+                x, y, w, h = cv2.boundingRect(contour)
+                detections.append({
+                    'box': (x, y, w, h),
+                    'color': color_name,
+                    'area': area
+                })
+
+    # If lights were detected, draw them all
+    if detections:
+        # Draw all valid detections found in the frame
+        for detection in detections:
+            x, y, w, h = detection['box']
+            color_name = detection['color']
+            box_color = BOX_COLORS.get(color_name, (255, 255, 255))
+
+            cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
+            label = f"{color_name.capitalize()}"
+            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, box_color, 2)
+
+
+def detect_traffic_light(video_source=0):
+    """
+    Processes video from a camera or file to identify traffic light states.
+    """
     cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         print(f"Error: Could not open video source '{video_source}'")
         return
 
-    # For FPS calculation
-    start_time = time.time()
-    frame_count = 0
-    fps = 0
-
+    print("Starting video stream. Press 'q' to quit.")
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("End of video stream.")
-            break
-            
-        # FPS Calculation
-        frame_count += 1
-        elapsed_time = time.time() - start_time
-        if elapsed_time > 1:
-            fps = frame_count / elapsed_time
-            frame_count = 0
-            start_time = time.time()
-
+            print("End of video stream. Looping video file.")
+            if isinstance(video_source, str):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+            else:
+                break
+        
         hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        
-        # 💡 NEW: List to store all detections in the current frame
-        all_detections = []
-        combined_mask = np.zeros(frame.shape[:2], dtype="uint8")
 
-        for color, (lower, upper) in color_ranges.items():
-            if color == 'red_wrap': continue # Handled with 'red'
+        # Find lights and draw them on the frame
+        find_and_draw_lights(frame, hsv_frame)
 
-            lower = np.array(lower)
-            upper = np.array(upper)
-            mask = cv2.inRange(hsv_frame, lower, upper)
-            
-            if color == 'red':
-                mask_wrap = cv2.inRange(hsv_frame, np.array(color_ranges['red_wrap'][0]), np.array(color_ranges['red_wrap'][1]))
-                mask = cv2.add(mask, mask_wrap)
-            
-            kernel = np.ones((5, 5), np.uint8)
-            mask_cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-            mask_cleaned = cv2.morphologyEx(mask_cleaned, cv2.MORPH_CLOSE, kernel)
-            
-            combined_mask = cv2.add(combined_mask, mask_cleaned)
+        # Display the final detection window
+        cv2.imshow('Traffic Light Detection', frame)
 
-            contours, _ = cv2.findContours(mask_cleaned, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-            # 💡 NEW: Loop through ALL contours without breaking
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area < 500: continue
-
-                perimeter = cv2.arcLength(contour, True)
-                if perimeter == 0: continue
-                
-                circularity = 4 * np.pi * (area / (perimeter * perimeter))
-
-                if 0.6 < circularity < 1.4:
-                    x, y, w, h = cv2.boundingRect(contour)
-                    # Store the detection details instead of drawing immediately
-                    all_detections.append({'color': color, 'box': (x, y, w, h)})
-        
-        # --- Drawing and Status Update Section ---
-        
-        # 💡 NEW: Update dashboard status based on all detections
-        if not all_detections:
-            status_text = "Searching..."
-        else:
-            # Count the number of lights of each color
-            light_counts = Counter(d['color'] for d in all_detections)
-            status_text = "Detected: " + ", ".join([f"{count} {color.capitalize()}" for color, count in light_counts.items()])
-        
-        # 💡 NEW: Draw all stored detections
-        for detection in all_detections:
-            color = detection['color']
-            x, y, w, h = detection['box']
-            draw_color = box_colors.get(color, (255, 0, 0))
-            
-            cv2.rectangle(frame, (x, y), (x + w, y + h), draw_color, 2)
-            cv2.putText(frame, color.capitalize(), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, draw_color, 2)
-            
-        # Draw the status dashboard
-        dashboard_height = 60
-        cv2.rectangle(frame, (0, frame.shape[0] - dashboard_height), (frame.shape[1], frame.shape[0]), (0, 0, 0), -1)
-        cv2.putText(frame, f"Status: {status_text}", (10, frame.shape[0] - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"FPS: {int(fps)}", (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-        # Show the diagnostic and main windows
-        cv2.imshow('Diagnostic Mask', combined_mask)
-        cv2.imshow('Traffic Light Detection - Final', frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(25) & 0xFF == ord('q'):
             break
 
     cap.release()
     cv2.destroyAllWindows()
+    print("Video stream stopped.")
 
-# --- Main execution ---
+# --- Main Execution ---
 if __name__ == '__main__':
-    # Use 0 for webcam or provide a path to a video file
+    # --- IMPORTANT ---
+    # To use your webcam, set video_source = 0
+    # To use a video file, change the source to the file path.
+    # For example: video_source = "C:/Users/YourUser/Videos/traffic.mp4"
     video_source = 0 
-    run_detector(video_source)
+    detect_traffic_light(video_source)
+
