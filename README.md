@@ -1,1 +1,1 @@
-"# traffic_light_detector" 
+"traffic_light_detector" 
